@@ -1784,6 +1784,76 @@ QAST::MASTOperations.add_core_op('callmethod', -> $qastcomp, $op {
     MAST::InstructionList.new($res_reg, $res_kind)
 });
 
+my &op_dispatch_v := %core_op_generators<dispatch_v>;
+my &op_dispatch_i := %core_op_generators<dispatch_i>;
+my &op_dispatch_n := %core_op_generators<dispatch_n>;
+my &op_dispatch_s := %core_op_generators<dispatch_s>;
+my &op_dispatch_o := %core_op_generators<dispatch_o>;
+QAST::MASTOperations.add_core_op('dispatch', :!inlinable, -> $qastcomp, $op {
+    # Obtain name of the dispatcher to use.
+    my @args := nqp::clone($op.list);
+    my $name_qast := nqp::shift(@args);
+    unless nqp::istype($name_qast, QAST::SVal) {
+        nqp::die('First node of dispatch op must be a constant string naming the dispatcher');
+    }
+    my str $dispatcher_name := $name_qast.value;
+
+    # Compile arguments and form callsite.
+    # XXX TODO constants go into callsite.
+    my @arg_mast;
+    my @arg_idxs;
+    my $regalloc := $*REGALLOC;
+    my $frame := $*MAST_FRAME;
+    for @args -> $arg {
+        my $arg_mast := $qastcomp.as_mast($arg);
+        my int $arg_mast_kind := nqp::unbox_i($arg_mast.result_kind);
+        if $arg_mast_kind == $MVM_reg_num32 {
+            $arg_mast := $qastcomp.coerce($arg_mast, $MVM_reg_num64);
+        }
+        elsif $arg_mast_kind == $MVM_reg_int32 || $arg_mast_kind == $MVM_reg_int16 ||
+                $arg_mast_kind == $MVM_reg_int8 || $arg_mast_kind == $MVM_reg_uint64 ||
+                $arg_mast_kind == $MVM_reg_uint32 || $arg_mast_kind == $MVM_reg_uint16 ||
+                $arg_mast_kind == $MVM_reg_uint8 {
+            $arg_mast := $qastcomp.coerce($arg_mast, $MVM_reg_int64);
+        }
+        nqp::push(@arg_mast, $arg_mast);
+        nqp::push(@arg_idxs, $arg_mast.result_reg);
+        $regalloc.release_register($arg_mast.result_reg, $arg_mast.result_kind);
+    }
+    my uint $callsite_id := $frame.callsites.get_callsite_id_from_args(@args, @arg_mast);
+
+    # Emit the correct dispatch instruction, allocating a result register if
+    # not in void context.
+    my $res_reg;
+    my int $res_kind;
+    if nqp::defined($*WANT) && $*WANT == $MVM_reg_void {
+        $res_reg := MAST::VOID;
+        $res_kind := $MVM_reg_void;
+        op_dispatch_v($dispatcher_name, $callsite_id, @arg_idxs);
+    }
+    else {
+        $res_kind := $qastcomp.type_to_register_kind($op.returns);
+        $res_reg := $regalloc.fresh_register($res_kind);
+        if $res_kind == $MVM_reg_obj {
+            op_dispatch_o($res_reg, $dispatcher_name, $callsite_id, @arg_idxs);
+        }
+        elsif $res_kind == $MVM_reg_int64 {
+            op_dispatch_i($res_reg, $dispatcher_name, $callsite_id, @arg_idxs);
+        }
+        elsif $res_kind == $MVM_reg_num64 {
+            op_dispatch_n($res_reg, $dispatcher_name, $callsite_id, @arg_idxs);
+        }
+        elsif $res_kind == $MVM_reg_str {
+            op_dispatch_s($res_reg, $dispatcher_name, $callsite_id, @arg_idxs);
+        }
+        else {
+            nqp::die('Unsupported register return kind for dispatch op');
+        }
+    }
+
+    MAST::InstructionList.new($res_reg, $res_kind)
+});
+
 # Binding
 QAST::MASTOperations.add_core_op('bind', -> $qastcomp, $op {
     # Sanity checks.
