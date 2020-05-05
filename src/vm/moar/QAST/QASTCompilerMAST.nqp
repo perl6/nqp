@@ -2231,6 +2231,7 @@ class MoarVM::Callsites {
     nqp::push_i(@kind_to_args, $Arg::obj);
     my int $flatnamed := $Arg::flatnamed;
     my int $flat      := $Arg::flat;
+    my int $literal   := $Arg::literal;
     my int $named     := $Arg::named;
     method get_callsite_id_from_args(@args, @arg_mast) {
         my uint16 $elems := nqp::elems(@args);
@@ -2254,6 +2255,10 @@ class MoarVM::Callsites {
                     $id_offset := $id_offset + 4;
                     $result_typeflag := $result_typeflag +| $named;
                 }
+            }
+            if nqp::istype($_, QAST::SVal) || nqp::istype($_, QAST::WVal) ||
+                    nqp::istype($_, QAST::IVal) || nqp::istype($_, QAST::NVal) {
+                $result_typeflag := $result_typeflag +| $literal;
             }
             nqp::push_i(@flags, $result_typeflag);
 

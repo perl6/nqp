@@ -1799,7 +1799,6 @@ QAST::MASTOperations.add_core_op('dispatch', :!inlinable, -> $qastcomp, $op {
     my str $dispatcher_name := $name_qast.value;
 
     # Compile arguments and form callsite.
-    # XXX TODO constants go into callsite.
     my @arg_mast;
     my @arg_idxs;
     my $regalloc := $*REGALLOC;
