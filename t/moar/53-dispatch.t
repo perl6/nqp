@@ -1,6 +1,15 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(2);
+plan(4);
+
+{
+    sub const($x) {
+        nqp::dispatch('boot-constant', $x)
+    }
+
+    ok(const(1) == 1, 'boot-constant on first call passes through the value');
+    ok(const(2) == 1, 'boot-constant fixates the value');
+}
 
 {
     sub value($x) {
