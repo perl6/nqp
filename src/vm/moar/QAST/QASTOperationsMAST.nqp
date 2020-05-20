@@ -1817,7 +1817,6 @@ QAST::MASTOperations.add_core_op('dispatch', :!inlinable, -> $qastcomp, $op {
         }
         nqp::push(@arg_mast, $arg_mast);
         nqp::push(@arg_idxs, $arg_mast.result_reg);
-        $regalloc.release_register($arg_mast.result_reg, $arg_mast.result_kind);
     }
     my uint $callsite_id := $frame.callsites.get_callsite_id_from_args(@args, @arg_mast);
 
@@ -1848,6 +1847,11 @@ QAST::MASTOperations.add_core_op('dispatch', :!inlinable, -> $qastcomp, $op {
         else {
             nqp::die('Unsupported register return kind for dispatch op');
         }
+    }
+
+    # Free argument registers.
+    for @arg_mast -> $arg_mast {
+        $regalloc.release_register($arg_mast.result_reg, $arg_mast.result_kind);
     }
 
     MAST::InstructionList.new($res_reg, $res_kind)
