@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(12);
+plan(15);
 
 {
     sub const($x) {
@@ -48,4 +48,33 @@ plan(12);
     });
     ok(nqp::dispatch('wrap-wrap-identity', 666) == 666,
         'Chains of userspace dispatcher delegations work (2 deep)');
+}
+
+{
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'drop-first', -> $capture {
+        my $capture-derived := nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-value', $capture-derived);
+    });
+    ok(nqp::dispatch('drop-first', 'first', 'second') eq 'second',
+        'dispatcher-drop-arg works');
+
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'drop-first-two', -> $capture {
+        my $capture-da := nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0);
+        my $capture-db := nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture-da, 0);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-value', $capture-db);
+    });
+    ok(nqp::dispatch('drop-first-two', 'first', 'second', 'third', 'fourth') eq 'third',
+        'Multiple applications of dispatcher-drop-arg work');
+}
+
+{
+    my $target := -> $x { $x + 1 }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'call-on-target', -> $capture {
+        my $capture-derived := nqp::dispatch('boot-syscall',
+                'dispatcher-insert-constant-arg', $capture, 0, $target);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                'boot-code-constant', $capture-derived);
+    });
+    ok(nqp::dispatch('call-on-target', 49) == 50,
+        'dispatcher-insert-arg works at start of capture');
 }
