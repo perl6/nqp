@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(15);
+plan(17);
 
 {
     sub const($x) {
@@ -71,12 +71,24 @@ plan(15);
     my $target := -> $x { $x + 1 }
     nqp::dispatch('boot-syscall', 'dispatcher-register', 'call-on-target', -> $capture {
         my $capture-derived := nqp::dispatch('boot-syscall',
-                'dispatcher-insert-constant-arg', $capture, 0, $target);
+                'dispatcher-insert-arg-literal-obj', $capture, 0, $target);
         nqp::dispatch('boot-syscall', 'dispatcher-delegate',
                 'boot-code-constant', $capture-derived);
     });
     ok(nqp::dispatch('call-on-target', 49) == 50,
-        'dispatcher-insert-arg works at start of capture');
+        'dispatcher-insert-arg-literal-obj works at start of capture');
+}
+
+{
+    my $target := -> $x, $y { $x ~ $y }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'insert-world', -> $capture {
+        my $capture-derived := nqp::dispatch('boot-syscall',
+                'dispatcher-insert-arg-literal-str', $capture, 2, 'world');
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                'boot-code-constant', $capture-derived);
+    });
+    ok(nqp::dispatch('insert-world', $target, 'hello ') eq 'hello world',
+        'dispatcher-insert-arg-literal-str works at end of capture');
 }
 
 {
