@@ -78,3 +78,16 @@ plan(15);
     ok(nqp::dispatch('call-on-target', 49) == 50,
         'dispatcher-insert-arg works at start of capture');
 }
+
+{
+    my $adder := -> $x, $y { $x * $y }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'dupe-arg', -> $capture {
+        my $first-arg := nqp::dispatch('boot-syscall',
+                'dispatcher-track-arg', $capture, 1);
+        my $capture-derived := nqp::dispatch('boot-syscall',
+                'dispatcher-insert-arg', $capture, 2, $first-arg);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                'boot-code-constant', $capture-derived);
+    });
+    ok(nqp::dispatch('dupe-arg', $adder, 3) == 9, 'Can duplicate an argument');
+}
