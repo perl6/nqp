@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(17);
+plan(32);
 
 {
     sub const($x) {
@@ -102,4 +102,43 @@ plan(17);
                 'boot-code-constant', $capture-derived);
     });
     ok(nqp::dispatch('dupe-arg', $adder, 3) == 9, 'Can duplicate an argument');
+}
+
+{
+    class C1 { }
+    class C2 { }
+    class C3 { }
+    my $count := 0;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'type-name', -> $capture {
+        $count++;
+        my $arg := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $capture, 0);
+        my $arg-val := nqp::captureposarg($capture, 0);
+        my str $name := $arg-val.HOW.name($arg-val);
+        nqp::dispatch('boot-syscall', 'dispatcher-guard-type', $arg);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-constant',
+            nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-str',
+                nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0),
+                0, $name));
+    });
+    sub type-name($obj) {
+        nqp::dispatch('type-name', $obj)
+    }
+
+    ok(type-name(C1) eq 'C1', 'Dispatcher setting guard works');
+    ok($count == 1, 'Dispatch callback ran once');
+    ok(type-name(C1) eq 'C1', 'Can use it another time with the same type');
+    ok($count == 1, 'Dispatch callback was not run again');
+
+    ok(type-name(C2) eq 'C2', 'Can handle polymorphic sites when guard fails');
+    ok($count == 2, 'Dispatch callback ran a second time for new type');
+    ok(type-name(C2) eq 'C2', 'Second call with new type works');
+    ok(type-name(C1) eq 'C1', 'Call with original type still works');
+    ok($count == 2, 'Dispatch callback only ran a total of 2 times');
+
+    ok(type-name(C3) eq 'C3', 'Can handle a third level of polymorphism');
+    ok($count == 3, 'Dispatch callback ran a third time for new type');
+    ok(type-name(C1) eq 'C1', 'Works with first type');
+    ok(type-name(C2) eq 'C2', 'Works with second type');
+    ok(type-name(C3) eq 'C3', 'Works with third type');
+    ok($count == 3, 'There were no further dispatch callback invocations');
 }
