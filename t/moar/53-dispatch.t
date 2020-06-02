@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(57);
+plan(60);
 
 {
     sub const($x) {
@@ -75,8 +75,11 @@ plan(57);
         nqp::dispatch('boot-syscall', 'dispatcher-delegate',
                 'boot-code-constant', $capture-derived);
     });
-    ok(nqp::dispatch('call-on-target', 49) == 50,
+    sub cot() { nqp::dispatch('call-on-target', 49) }
+    ok(cot() == 50,
         'dispatcher-insert-arg-literal-obj works at start of capture');
+    ok(cot() == 50,
+        'dispatcher-insert-arg-literal-obj works at start of capture after link too');
 }
 
 {
@@ -87,8 +90,11 @@ plan(57);
         nqp::dispatch('boot-syscall', 'dispatcher-delegate',
                 'boot-code-constant', $capture-derived);
     });
-    ok(nqp::dispatch('insert-world', $target, 'hello ') eq 'hello world',
+    sub insert() { nqp::dispatch('insert-world', $target, 'hello ') }
+    ok(insert() eq 'hello world',
         'dispatcher-insert-arg-literal-str works at end of capture');
+    ok(insert() eq 'hello world',
+        'dispatcher-insert-arg-literal-str works at end of capture after link too');
 }
 
 {
@@ -101,7 +107,9 @@ plan(57);
         nqp::dispatch('boot-syscall', 'dispatcher-delegate',
                 'boot-code-constant', $capture-derived);
     });
-    ok(nqp::dispatch('dupe-arg', $adder, 3) == 9, 'Can duplicate an argument');
+    sub dupe() { nqp::dispatch('dupe-arg', $adder, 3) }
+    ok(dupe() == 9, 'Can duplicate an argument');
+    ok(dupe() == 9, 'Argument duplicating works after link too');
 }
 
 {
