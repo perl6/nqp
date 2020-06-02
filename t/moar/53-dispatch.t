@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(55);
+plan(57);
 
 {
     sub const($x) {
@@ -233,4 +233,33 @@ plan(55);
     ok(nil-check(C) eq 'not nil', 'Another case without unwanted literal');
     ok(nil-check(Nil) eq 'nil', 'Another case with unwanted literal');
     ok($count == 2, 'No further dispatch runs');
+}
+
+{
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'dies', -> $capture {
+        nqp::die('my dying dispatcher')
+    });
+    my $message := '';
+    try {
+        nqp::dispatch('dies', 42);
+        CATCH {
+            $message := ~$_;
+        }
+    }
+    ok($message eq 'my dying dispatcher', 'Exceptions thrown in dispatch are passed along');
+}
+
+{
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'bad-dupe', -> $capture {
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-value', $capture);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-value', $capture);
+    });
+    my $message := '';
+    try {
+        nqp::dispatch('bad-dupe', 42);
+        CATCH {
+            $message := ~$_;
+        }
+    }
+    ok($message ~~ /'dispatcher-delegate'/, 'Decent error on dupe dispatcher-delegate');
 }
