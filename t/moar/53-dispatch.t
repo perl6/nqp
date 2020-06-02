@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(32);
+plan(40);
 
 {
     sub const($x) {
@@ -105,9 +105,9 @@ plan(32);
 }
 
 {
-    class C1 { }
-    class C2 { }
-    class C3 { }
+    my class C1 { }
+    my class C2 { }
+    my class C3 { }
     my $count := 0;
     nqp::dispatch('boot-syscall', 'dispatcher-register', 'type-name', -> $capture {
         $count++;
@@ -141,4 +141,33 @@ plan(32);
     ok(type-name(C2) eq 'C2', 'Works with second type');
     ok(type-name(C3) eq 'C3', 'Works with third type');
     ok($count == 3, 'There were no further dispatch callback invocations');
+}
+
+{
+    my class C1 { }
+    my class C2 { }
+    my $count := 0;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'conc', -> $capture {
+        $count++;
+        my $arg := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $capture, 0);
+        my $arg-val := nqp::captureposarg($capture, 0);
+        my str $result := nqp::isconcrete($arg-val) ?? 'conc' !! 'type';
+        nqp::dispatch('boot-syscall', 'dispatcher-guard-concreteness', $arg);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-constant',
+            nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-str',
+                nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0),
+                0, $result));
+    });
+    sub conc($obj) {
+        nqp::dispatch('conc', $obj)
+    }
+
+    ok(conc(C1) eq 'type', 'Concreteness guard test dispatcher works on type object');
+    ok(conc(C1.new) eq 'conc', 'Concreteness guard test dispatcher works on instance');
+    ok($count == 2, 'Ran once for each concreteness');
+    ok(conc(C1) eq 'type', 'Repeated test works on type object');
+    ok(conc(C1.new) eq 'conc', 'Repeated test works on instance');
+    ok(conc(C2) eq 'type', 'Repeated test works on a different type object');
+    ok(conc(C2.new) eq 'conc', 'Repeated test works on different instance');
+    ok($count == 2, 'Was really only guarding concreteness');
 }
