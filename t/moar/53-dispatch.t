@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(40);
+plan(46);
 
 {
     sub const($x) {
@@ -170,4 +170,31 @@ plan(40);
     ok(conc(C2) eq 'type', 'Repeated test works on a different type object');
     ok(conc(C2.new) eq 'conc', 'Repeated test works on different instance');
     ok($count == 2, 'Was really only guarding concreteness');
+}
+
+{
+    my class C { has $!foo; method foo() { $!foo } }
+    my $count := 0;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'literal', -> $capture {
+        $count++;
+        my $arg := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $capture, 0);
+        my $arg-val := nqp::captureposarg($capture, 0);
+        nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $arg);
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-constant',
+            nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-obj',
+                nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0),
+                0, $arg-val.foo));
+    });
+    sub literal($obj) {
+        nqp::dispatch('literal', $obj)
+    }
+
+    my $i1 := C.new(foo => 'bar');
+    my $i2 := C.new(foo => 'baz');
+    ok(literal($i1) eq 'bar', 'Literal guard test dispatcher works on instance 1');
+    ok(literal($i2) eq 'baz', 'Literal guard test dispatcher works on instance 2');
+    ok($count == 2, 'Ran once for each literal');
+    ok(literal($i1) eq 'bar', 'Repeated literal guard test dispatcher works on instance 1');
+    ok(literal($i2) eq 'baz', 'Repeated literal guard test dispatcher works on instance 2');
+    ok($count == 2, 'Guards match with same literal');
 }
