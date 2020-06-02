@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(46);
+plan(55);
 
 {
     sub const($x) {
@@ -197,4 +197,40 @@ plan(46);
     ok(literal($i1) eq 'bar', 'Repeated literal guard test dispatcher works on instance 1');
     ok(literal($i2) eq 'baz', 'Repeated literal guard test dispatcher works on instance 2');
     ok($count == 2, 'Guards match with same literal');
+}
+
+{
+    my class Nil { }
+    my class C { }
+    my class D { }
+    my $count := 0;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'nil-check', -> $capture {
+        $count++;
+        my $arg := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $capture, 0);
+        my $arg-val := nqp::captureposarg($capture, 0);
+        my $is-nil := nqp::istype($arg-val, Nil);
+        if $is-nil {
+            nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $arg);
+        }
+        else {
+            nqp::dispatch('boot-syscall', 'dispatcher-guard-not-literal-obj', $arg, Nil);
+        }
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-constant',
+            nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-str',
+                nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0),
+                0, $is-nil ?? 'nil' !! 'not nil'));
+    });
+    sub nil-check($obj) {
+        nqp::dispatch('nil-check', $obj)
+    }
+
+    ok(nil-check(C) eq 'not nil', 'Can add not literal guard');
+    ok(nil-check(C.new) eq 'not nil', 'Dispatch that is not that literal works');
+    ok(nil-check(D.new) eq 'not nil', 'Dispatch on other type works');
+    ok($count == 1, 'Ran dispatch only once since unwanted literal never passed');
+    ok(nil-check(Nil) eq 'nil', 'Passing unwanted literal does not meet guard');
+    ok($count == 2, 'Now dispatch was run twice');
+    ok(nil-check(C) eq 'not nil', 'Another case without unwanted literal');
+    ok(nil-check(Nil) eq 'nil', 'Another case with unwanted literal');
+    ok($count == 2, 'No further dispatch runs');
 }
