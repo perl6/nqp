@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(60);
+plan(65);
 
 {
     sub const($x) {
@@ -270,4 +270,31 @@ plan(60);
         }
     }
     ok($message ~~ /'dispatcher-delegate'/, 'Decent error on dupe dispatcher-delegate');
+}
+
+{
+    my class Wrapper {
+        has $!value;
+    }
+    my class Subclass is Wrapper {
+    }
+    my $count := 0;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'read-value', -> $capture {
+        $count++;
+        my $arg := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $capture, 0);
+        my $value := nqp::dispatch('boot-syscall', 'dispatcher-track-attr', $arg,
+            Wrapper, '$!value');
+        nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-value',
+            nqp::dispatch('boot-syscall', 'dispatcher-insert-arg',
+                nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0),
+                0, $value));
+    });
+    sub rv($obj) {
+        nqp::dispatch('read-value', $obj)
+    }
+    ok(rv(Wrapper.new(value => 42)) == 42, 'Tracked attribute used as result works');
+    ok(rv(Wrapper.new(value => 43)) == 43, 'Follow-up call does not fixate attribute read');
+    ok($count == 1, 'Dispatch callback only invoked once');
+    ok(rv(Subclass.new(value => 44)) == 44, 'On a subclass it also works');
+    ok($count == 2, 'However, on a subclass implied guards are not met');
 }
