@@ -1790,8 +1790,10 @@ my &op_dispatch_n := %core_op_generators<dispatch_n>;
 my &op_dispatch_s := %core_op_generators<dispatch_s>;
 my &op_dispatch_o := %core_op_generators<dispatch_o>;
 QAST::MASTOperations.add_core_op('dispatch', :!inlinable, -> $qastcomp, $op {
+    # Ensure named/positional constraint is upheld.
+    my @args := arrange_args($op.list);
+
     # Obtain name of the dispatcher to use.
-    my @args := nqp::clone($op.list);
     my $name_qast := nqp::shift(@args);
     unless nqp::istype($name_qast, QAST::SVal) {
         nqp::die('First node of dispatch op must be a constant string naming the dispatcher');
