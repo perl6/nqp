@@ -37,7 +37,6 @@ my uint $op_code_invoke_i     := %MAST::Ops::codes<invoke_i>;
 my uint $op_code_invoke_n     := %MAST::Ops::codes<invoke_n>;
 my uint $op_code_invoke_s     := %MAST::Ops::codes<invoke_s>;
 my uint $op_code_invoke_o     := %MAST::Ops::codes<invoke_o>;
-my uint $op_code_speshresolve := %MAST::Ops::codes<speshresolve>;
 
 # This is used as a return value from all of the various compilation routines.
 # It groups together a set of instructions along with a result register and a
@@ -1492,8 +1491,7 @@ my $call_gen := sub ($qastcomp, $op) {
     elsif nqp::elems(@args) {
         @args := nqp::clone(@args);
         my $callee_qast := @args.shift;
-        my $no_decont := nqp::istype($callee_qast, QAST::Op) && $callee_qast.op eq 'speshresolve'
-            || nqp::istype($callee_qast, QAST::WVal) && !nqp::iscont($callee_qast.value);
+        my $no_decont := nqp::istype($callee_qast, QAST::WVal) && !nqp::iscont($callee_qast.value);
         $callee := $qastcomp.as_mast(
             $no_decont ?? $callee_qast !! QAST::Op.new( :op('decont'), $callee_qast ),
             :want($MVM_reg_obj));
@@ -3293,76 +3291,6 @@ QAST::MASTOperations.add_core_moarop_mapping('installconfprog', 'installconfprog
 
 # MoarVM-specific event subscription op
 QAST::MASTOperations.add_core_moarop_mapping('vmeventsubscribe', 'vmeventsubscribe');
-
-# MoarVM-specific specializer plugin ops
-QAST::MASTOperations.add_core_moarop_mapping('speshreg', 'speshreg', 2);
-QAST::MASTOperations.add_core_moarop_mapping('speshguardtype', 'speshguardtype', 0);
-QAST::MASTOperations.add_core_moarop_mapping('speshguardconcrete', 'speshguardconcrete', 0);
-QAST::MASTOperations.add_core_moarop_mapping('speshguardtypeobj', 'speshguardtypeobj', 0);
-QAST::MASTOperations.add_core_moarop_mapping('speshguardobj', 'speshguardobj', 0);
-QAST::MASTOperations.add_core_moarop_mapping('speshguardnotobj', 'speshguardnotobj', 0);
-QAST::MASTOperations.add_core_moarop_mapping('speshguardgetattr', 'speshguardgetattr');
-QAST::MASTOperations.add_core_op('speshresolve', -> $qastcomp, $op {
-    # Get the target name.
-    my @args := nqp::clone($op.list);
-    my $target_node := nqp::shift(@args);
-    unless nqp::istype($target_node, QAST::SVal) {
-        nqp::die("speshresolve node must have a first child that is a QAST::SVal");
-    }
-    my $target := $target_node.value;
-
-    my $regalloc := $*REGALLOC;
-    my $frame    := $*MAST_FRAME;
-    my $bytecode := $frame.bytecode;
-
-    # Compile the arguments
-    my @arg_mast := nqp::list();
-
-    for @args -> $arg {
-        if nqp::can($arg, 'flat') && $arg.flat {
-            nqp::die('The speshresolve op must not have flattening arguments');
-        }
-        elsif nqp::can($arg, 'named') && $arg.named {
-            nqp::die('The speshresolve op must not have named arguments');
-        }
-        my $arg_mast := $qastcomp.as_mast($arg, :want($MVM_reg_obj));
-        nqp::die("Arg code did not result in a MAST::Local")
-            unless $arg_mast.result_reg && $arg_mast.result_reg ~~ MAST::Local;
-        nqp::push(@arg_mast, $arg_mast);
-    }
-
-    my uint $callsite-id := $frame.callsites.get_callsite_id_from_args(@args, @arg_mast);
-    my uint64 $bytecode_pos := nqp::elems($bytecode);
-
-    nqp::writeuint($bytecode, $bytecode_pos, $op_code_prepargs, 5);
-    nqp::writeuint($bytecode, nqp::add_i($bytecode_pos, 2), $callsite-id, 5);
-    $bytecode_pos := $bytecode_pos + 4;
-
-    my uint64 $i := 0;
-    for @args -> $arg {
-        my $arg_mast := @arg_mast[$i];
-        my int $kind := nqp::unbox_i($arg_mast.result_kind);
-        my uint64 $arg_opcode := nqp::atpos_i(@kind_to_opcode, $kind);
-        nqp::die("Unhandled arg type $kind") unless $arg_opcode;
-        nqp::writeuint($bytecode, $bytecode_pos, $arg_opcode, 5);
-        nqp::writeuint($bytecode, nqp::add_i($bytecode_pos, 2), $i++, 5);
-        my uint64 $res_index := nqp::unbox_u($arg_mast.result_reg);
-        nqp::writeuint($bytecode, nqp::add_i($bytecode_pos, 4), $res_index, 5);
-        $bytecode_pos := $bytecode_pos + 6;
-
-        $regalloc.release_register($arg_mast.result_reg, $kind);
-    }
-
-    # Assemble the resolve call.
-    my $res_reg := $regalloc.fresh_register($MVM_reg_obj);
-    nqp::writeuint($bytecode, $bytecode_pos, $op_code_speshresolve, 5);
-    my uint $res_index := nqp::unbox_u($res_reg);
-    nqp::writeuint($bytecode, nqp::add_i($bytecode_pos, 2), $res_index, 5);
-    my uint $target_idx := $frame.add-string($target);
-    nqp::writeuint($bytecode, nqp::add_i($bytecode_pos, 4), $target_idx, 9);
-
-    MAST::InstructionList.new($res_reg, $MVM_reg_obj)
-});
 
 QAST::MASTOperations.add_core_moarop_mapping('hllbool', 'hllbool');
 QAST::MASTOperations.add_core_moarop_mapping('hllboolfor', 'hllboolfor');
