@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(65);
+plan(67);
 
 {
     sub const($x) {
@@ -297,4 +297,30 @@ plan(65);
     ok($count == 1, 'Dispatch callback only invoked once');
     ok(rv(Subclass.new(value => 44)) == 44, 'On a subclass it also works');
     ok($count == 2, 'However, on a subclass implied guards are not met');
+}
+
+{
+    my $target := -> $arg { nqp::dispatch('boot-resume', 'res-arg')  }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'basic-resumable',
+        # Dispatch
+        -> $capture {
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $target);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        },
+        # Resume
+        -> $capture {
+            nqp::die('In resume with arg ' ~ nqp::captureposarg_s($capture, 0));
+        });
+    my $message := '';
+    try {
+        nqp::dispatch('basic-resumable', 42);
+        CATCH {
+            $message := ~$_;
+        }
+    }
+    ok($message ~~ /'In resume with arg'/, 'With boot-resume we make it into resume callback');
+    ok($message ~~ /'res-arg'/, 'Resume callback gets expected argument');
 }
