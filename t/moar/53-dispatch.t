@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(67);
+plan(71);
 
 {
     sub const($x) {
@@ -323,4 +323,58 @@ plan(67);
     }
     ok($message ~~ /'In resume with arg'/, 'With boot-resume we make it into resume callback');
     ok($message ~~ /'res-arg'/, 'Resume callback gets expected argument');
+}
+
+{
+    my $target-a := -> { nqp::dispatch('boot-resume') }
+    my $target-b := -> { 'reached'  }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'resumable-really-calls',
+        # Dispatch
+        -> $capture {
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $target-a);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        },
+        # Resume
+        -> $capture {
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $target-b);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        });
+    ok(nqp::dispatch('resumable-really-calls') eq 'reached',
+        'resume callback can successfully provide code to run');
+}
+
+{
+    my $target-a := -> $arg { 'x' ~ nqp::dispatch('boot-resume')  }
+    my $target-b := -> $arg { 'y' ~ $arg }
+    my int $disp-count;
+    my int $res-count;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'resumable-using-init-args',
+        # Dispatch
+        -> $capture {
+            $disp-count++;
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $target-a);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        },
+        # Resume
+        -> $capture {
+            $res-count++;
+            my $args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $args, 0, $target-b);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        });
+    sub test-call(str $arg) { nqp::dispatch('resumable-using-init-args', $arg) }
+
+    ok(test-call('z') eq 'xyz', 'Resumption could access init args');
+    ok($disp-count == 1, 'In dispatch function once');
+    ok($res-count == 1, 'In resume function once');
 }
