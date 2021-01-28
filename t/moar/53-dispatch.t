@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(71);
+plan(74);
 
 {
     sub const($x) {
@@ -377,4 +377,8 @@ plan(71);
     ok(test-call('z') eq 'xyz', 'Resumption could access init args');
     ok($disp-count == 1, 'In dispatch function once');
     ok($res-count == 1, 'In resume function once');
+
+    ok(test-call('Z') eq 'xyZ', 'Second call works and did not fixate init arg');
+    ok($disp-count == 1, 'Still only in dispatch function once');
+    ok($res-count == 1, 'Still only in resume function once');
 }
