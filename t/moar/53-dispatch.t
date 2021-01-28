@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(74);
+plan(83);
 
 {
     sub const($x) {
@@ -379,6 +379,45 @@ plan(74);
     ok($res-count == 1, 'In resume function once');
 
     ok(test-call('Z') eq 'xyZ', 'Second call works and did not fixate init arg');
+    ok($disp-count == 1, 'Still only in dispatch function once');
+    ok($res-count == 1, 'Still only in resume function once');
+}
+
+{
+    my $target-a := -> $arg { 'x' ~ ($arg ?? nqp::dispatch('boot-resume') !! '') }
+    my $target-b := -> $arg { 'y' ~ $arg }
+    my int $disp-count;
+    my int $res-count;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'resumable-conditionally-resumed',
+        # Dispatch
+        -> $capture {
+            $disp-count++;
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $target-a);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        },
+        # Resume
+        -> $capture {
+            $res-count++;
+            my $args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $args, 0, $target-b);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        });
+    sub test-call(str $arg) { nqp::dispatch('resumable-conditionally-resumed', $arg) }
+
+    ok(test-call('') eq 'x', 'Code that conditionally resumes OK on first execution');
+    ok($disp-count == 1, 'In dispatch function once');
+    ok($res-count == 0, 'Not in resume function yet');
+
+    ok(test-call('w') eq 'xyw', 'First resume taking place in second dispatch works');
+    ok($disp-count == 1, 'Still only in dispatch function once');
+    ok($res-count == 1, 'Now also in resume function once');
+
+    ok(test-call('v') eq 'xyv', 'Second resume taking place in third dispatch works');
     ok($disp-count == 1, 'Still only in dispatch function once');
     ok($res-count == 1, 'Still only in resume function once');
 }
