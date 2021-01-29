@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(83);
+plan(98);
 
 {
     sub const($x) {
@@ -420,4 +420,60 @@ plan(83);
     ok(test-call('v') eq 'xyv', 'Second resume taking place in third dispatch works');
     ok($disp-count == 1, 'Still only in dispatch function once');
     ok($res-count == 1, 'Still only in resume function once');
+}
+
+{
+    my $target-a := -> $arg { 'a' ~ nqp::dispatch('boot-resume')  }
+    my $target-b1 := -> $arg { 'b1' }
+    my $target-b2 := -> $arg { 'b2' }
+    my class B1 {}
+    my class B2 {}
+    my int $disp-count;
+    my int $res-count;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'resume-guarding-init-state',
+        # Dispatch
+        -> $capture {
+            $disp-count++;
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $target-a);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        },
+        # Resume
+        -> $capture {
+            # We insert a guard on the type and use it to choose where we will
+            # dispatch to, to test guarding on resume init args.
+            $res-count++;
+            my $args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            my $arg := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $args, 0);
+            nqp::dispatch('boot-syscall', 'dispatcher-guard-type', $arg);
+            my $arg-val := nqp::captureposarg($args, 0);
+            my $target := nqp::istype($arg-val, B1) ?? $target-b1 !! $target-b2;
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $args, 0, $target);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        });
+    sub test-call($arg) { nqp::dispatch('resume-guarding-init-state', $arg) }
+
+    ok(test-call(B1) eq 'ab1', 'Resumption that guards on type works');
+    ok($disp-count == 1, 'In dispatch function once');
+    ok($res-count == 1, 'In resume function once');
+
+    ok(test-call(B1) eq 'ab1', 'Second call with same time also works');
+    ok($disp-count == 1, 'Still only in dispatch function once');
+    ok($res-count == 1, 'Still only in resume function once');
+
+    ok(test-call(B2) eq 'ab2', 'Call with different type works');
+    ok($disp-count == 1, 'Still only in dispatch function once as it is not type dependent');
+    ok($res-count == 2, 'Was in resume function a second time due to type guard miss');
+
+    ok(test-call(B2) eq 'ab2', 'Second call with different type works');
+    ok($disp-count == 1, 'Still only in dispatch function once as it is not type dependent');
+    ok($res-count == 2, 'Still only Was in resume function twice');
+
+    ok(test-call(B1) eq 'ab1', 'Call using first type again still works');
+    ok($disp-count == 1, 'Still only in dispatch function once');
+    ok($res-count == 2, 'Still only in resume function twice');
 }
