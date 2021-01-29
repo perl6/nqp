@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(98);
+plan(107);
 
 {
     sub const($x) {
@@ -461,7 +461,7 @@ plan(98);
     ok($disp-count == 1, 'In dispatch function once');
     ok($res-count == 1, 'In resume function once');
 
-    ok(test-call(B1) eq 'ab1', 'Second call with same time also works');
+    ok(test-call(B1) eq 'ab1', 'Second call with same type also works');
     ok($disp-count == 1, 'Still only in dispatch function once');
     ok($res-count == 1, 'Still only in resume function once');
 
@@ -476,4 +476,122 @@ plan(98);
     ok(test-call(B1) eq 'ab1', 'Call using first type again still works');
     ok($disp-count == 1, 'Still only in dispatch function once');
     ok($res-count == 2, 'Still only in resume function twice');
+}
+
+# Used for building tests that emulate Raku method deferral, but rather
+# simplified
+class DeferralChain {
+    has $!method;
+    has $!next;
+    method new($method, $next) {
+        my $obj := nqp::create(self);
+        nqp::bindattr($obj, DeferralChain, '$!method', $method);
+        nqp::bindattr($obj, DeferralChain, '$!next', $next);
+        $obj
+    }
+    method method() { $!method }
+    method next() { $!next }
+};
+class Exhausted {};
+
+{
+    my class C1 { method m() { 'c1' } }
+    my class C2 is C1 { method m() { 'c2' ~ nqp::dispatch('boot-resume') } }
+    my class C3 is C2 { method m() { 'c3' ~ nqp::dispatch('boot-resume') } }
+    my class C4 is C3 { method m() { 'c4' ~ nqp::dispatch('boot-resume') } }
+
+    my int $disp-count;
+    my int $res-count;
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'method-deferral',
+        # Dispatch
+        -> $capture {
+            $disp-count++;
+            # We'll resume on the original dispatch arguments.
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+
+            # Guard on the method name and invocant type.
+            my $name := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $capture, 0);
+            nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $name);
+            my $invocant := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $capture, 1);
+            nqp::dispatch('boot-syscall', 'dispatcher-guard-type', $invocant);
+
+            # Resolve the method.
+            my str $name-val := nqp::captureposarg_s($capture, 0);
+            my $invocant-val := nqp::captureposarg($capture, 1);
+            my $meth := $invocant-val.HOW.find_method($invocant-val, $name-val);
+            unless nqp::isconcrete($meth) {
+                nqp::die("No such method '$meth'");
+            }
+
+            # Drop the name, insert the method, delegate.
+            my $without-name := nqp::dispatch('boot-syscall',
+                    'dispatcher-drop-arg', $capture, 0);
+            my $with-method := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $without-name, 0,
+                    nqp::getattr($meth, NQPRoutine, '$!do'));
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $with-method);
+        },
+        # Resume
+        -> $capture {
+            $res-count++;
+
+            # Check if we have an existing dispatch state.
+            my $state := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-state');
+            if nqp::isnull($state) {
+                # No state, so just starting the resumption. Guard on the
+                # invocant type and name.
+                my $init := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+                my $name := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $init, 0);
+                nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $name);
+                my $invocant := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $init, 1);
+                nqp::dispatch('boot-syscall', 'dispatcher-guard-type', $invocant);
+
+                # Find all methods.
+                my str $name-val := nqp::captureposarg_s($init, 0);
+                my $invocant-val := nqp::captureposarg($init, 1);
+                my @methods;
+                for $invocant-val.HOW.mro($invocant-val) {
+                    my $meth := $_.HOW.method_table($_){$name-val};
+                    @methods.push($meth) if nqp::isconcrete($meth);
+                }
+                @methods.shift; # Discard the first one, which we initially called
+                my $next-method := @methods.shift; # The immediate next one
+
+                # Build chain of further methods and set it as the state.
+                my $chain := Exhausted;
+                while @methods {
+                    $chain := DeferralChain.new(@methods.pop, $chain);
+                }
+                nqp::dispatch('boot-syscall', 'dispatcher-set-resume-state', $chain);
+
+                # Invoke the immediate next method.
+                my $without-name := nqp::dispatch('boot-syscall',
+                        'dispatcher-drop-arg', $init, 0);
+                my $with-method := nqp::dispatch('boot-syscall',
+                        'dispatcher-insert-arg-literal-obj', $without-name, 0,
+                        nqp::getattr($next-method, NQPRoutine, '$!do'));
+                nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                        'boot-code-constant', $with-method);
+            }
+            else {
+                # Already working through a chain of things to dispatch on.
+                nqp::die('nyi 2');
+            }
+        });
+    sub test-call($obj) {
+        nqp::dispatch('method-deferral', 'm', $obj)
+    }
+
+    ok(test-call(C1) eq 'c1', 'Non-resuming method deferral dispatch works');
+    ok($disp-count == 1, 'Was in the dispatch callback once');
+    ok($res-count == 0, 'Was never in the resume callback');
+
+    ok(test-call(C2) eq 'c2c1', 'Single level of deferral works');
+    ok($disp-count == 2, 'Was in the dispatch callback a second time');
+    ok($res-count == 1, 'Was in the resume callback once');
+
+    ok(test-call(C2) eq 'c2c1', 'Single level of deferral works with recorded program');
+    ok($disp-count == 2, 'Was not in the dispatch callback again');
+    ok($res-count == 1, 'Was not in the resume callback again');
 }
