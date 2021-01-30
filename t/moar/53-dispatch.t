@@ -563,7 +563,7 @@ class Exhausted {};
                 while @methods {
                     $chain := DeferralChain.new(@methods.pop, $chain);
                 }
-                nqp::dispatch('boot-syscall', 'dispatcher-set-resume-state', $chain);
+                nqp::dispatch('boot-syscall', 'dispatcher-set-resume-state-literal', $chain);
 
                 # Invoke the immediate next method.
                 my $without-name := nqp::dispatch('boot-syscall',
@@ -574,9 +574,29 @@ class Exhausted {};
                 nqp::dispatch('boot-syscall', 'dispatcher-delegate',
                         'boot-code-constant', $with-method);
             }
+            elsif nqp::istype($state, Exhausted) {
+                nqp::die('Nowhere to defer to');
+            }
             else {
                 # Already working through a chain of things to dispatch on.
-                nqp::die('nyi 2');
+                # Obtain the tracking object for the dispatch state, and
+                # guard against the method attribute.
+                my $track-state := nqp::dispatch('boot-syscall', 'dispatcher-track-resume-state');
+                my $track-method := nqp::dispatch('boot-syscall', 'dispatcher-track-attr',
+                    $track-state, DeferralChain, '$!method');
+                nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $track-method);
+
+                # TODO update state
+
+                # Dispatch to the method at the head of the chain.
+                my $init := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+                my $without-name := nqp::dispatch('boot-syscall',
+                        'dispatcher-drop-arg', $init, 0);
+                my $with-method := nqp::dispatch('boot-syscall',
+                        'dispatcher-insert-arg-literal-obj', $without-name, 0,
+                        nqp::getattr($state.method, NQPRoutine, '$!do'));
+                nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                        'boot-code-constant', $with-method);
             }
         });
     sub test-call($obj) {
@@ -594,4 +614,12 @@ class Exhausted {};
     ok(test-call(C2) eq 'c2c1', 'Single level of deferral works with recorded program');
     ok($disp-count == 2, 'Was not in the dispatch callback again');
     ok($res-count == 1, 'Was not in the resume callback again');
+
+    ok(test-call(C3) eq 'c3c2c1', 'Two levels of deferral works');
+    ok($disp-count == 3, 'Was in the dispatch callback a third time');
+    ok($res-count == 3, 'Was in the resume callback two more times as resumed twice');
+
+    ok(test-call(C3) eq 'c3c2c1', 'Two levels of deferral works with recorded program');
+    ok($disp-count == 3, 'Was not in the dispatch callback again');
+    ok($res-count == 3, 'Was not in the resume callback again');
 }
