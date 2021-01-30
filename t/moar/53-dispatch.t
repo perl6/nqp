@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(107);
+plan(119);
 
 {
     sub const($x) {
@@ -586,7 +586,10 @@ class Exhausted {};
                     $track-state, DeferralChain, '$!method');
                 nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $track-method);
 
-                # TODO update state
+                # Update dispatch state to point to next method.
+                my $track-next := nqp::dispatch('boot-syscall', 'dispatcher-track-attr',
+                    $track-state, DeferralChain, '$!next');
+                nqp::dispatch('boot-syscall', 'dispatcher-set-resume-state', $track-next);
 
                 # Dispatch to the method at the head of the chain.
                 my $init := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
@@ -622,4 +625,12 @@ class Exhausted {};
     ok(test-call(C3) eq 'c3c2c1', 'Two levels of deferral works with recorded program');
     ok($disp-count == 3, 'Was not in the dispatch callback again');
     ok($res-count == 3, 'Was not in the resume callback again');
+
+    ok(test-call(C4) eq 'c4c3c2c1', 'Three levels of deferral works');
+    ok($disp-count == 4, 'Was in the dispatch callback a fourth time');
+    ok($res-count == 5, 'Was in the resume callback twice more (by forth level, identical state)');
+
+    ok(test-call(C4) eq 'c4c3c2c1', 'Three levels of deferral works with recorded program');
+    ok($disp-count == 4, 'Was not in the dispatch callback again');
+    ok($res-count == 5, 'Was not in the resume callback again');
 }
