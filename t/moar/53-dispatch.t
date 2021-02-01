@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(119);
+plan(125);
 
 {
     sub const($x) {
@@ -547,6 +547,10 @@ class Exhausted {};
                 my $invocant := nqp::dispatch('boot-syscall', 'dispatcher-track-arg', $init, 1);
                 nqp::dispatch('boot-syscall', 'dispatcher-guard-type', $invocant);
 
+                # Also guard on there being no dispatch state.
+                my $track-state := nqp::dispatch('boot-syscall', 'dispatcher-track-resume-state');
+                nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $track-state);
+
                 # Find all methods.
                 my str $name-val := nqp::captureposarg_s($init, 0);
                 my $invocant-val := nqp::captureposarg($init, 1);
@@ -633,4 +637,31 @@ class Exhausted {};
     ok(test-call(C4) eq 'c4c3c2c1', 'Three levels of deferral works with recorded program');
     ok($disp-count == 4, 'Was not in the dispatch callback again');
     ok($res-count == 5, 'Was not in the resume callback again');
+
+    # We also test it with boot-resume-caller, which we use in Raku to skip
+    # over the callsame dispatch itself.
+    my $callsame := -> {
+        nqp::dispatch('boot-resume-caller')
+    }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'invoke-callsame',
+        # Dispatch
+        -> $capture {
+            my $with-target := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $callsame);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $with-target);
+        });
+
+    my class CS1 { method m() { 'cs1' } }
+    my class CS2 is CS1 { method m() { 'cs2' ~ nqp::dispatch('invoke-callsame') } }
+    my class CS3 is CS2 { method m() { 'cs3' ~ nqp::dispatch('invoke-callsame') } }
+    my class CS4 is CS3 { method m() { 'cs4' ~ nqp::dispatch('invoke-callsame') } }
+
+    ok(test-call(CS2) eq 'cs2cs1', '2-level dispatch works with boot-resume-caller');
+    ok(test-call(CS3) eq 'cs3cs2cs1', '3-level dispatch works with boot-resume-caller');
+    ok(test-call(CS4) eq 'cs4cs3cs2cs1', '4-level dispatch works with boot-resume-caller');
+
+    ok(test-call(CS2) eq 'cs2cs1', '2-level dispatch works with boot-resume-caller (recorded)');
+    ok(test-call(CS3) eq 'cs3cs2cs1', '3-level dispatch works with boot-resume-caller (recorded)');
+    ok(test-call(CS4) eq 'cs4cs3cs2cs1', '4-level dispatch works with boot-resume-caller (recorded)');
 }
