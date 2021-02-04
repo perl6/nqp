@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(125);
+plan(127);
 
 {
     sub const($x) {
@@ -664,4 +664,36 @@ class Exhausted {};
     ok(test-call(CS2) eq 'cs2cs1', '2-level dispatch works with boot-resume-caller (recorded)');
     ok(test-call(CS3) eq 'cs3cs2cs1', '3-level dispatch works with boot-resume-caller (recorded)');
     ok(test-call(CS4) eq 'cs4cs3cs2cs1', '4-level dispatch works with boot-resume-caller (recorded)');
+}
+
+# We may tweak the argument capture that we save as the initialization state.
+{
+    my $first := -> $arg { $arg ~ nqp::dispatch('boot-resume') }
+    my $second := -> $arg-code, $arg { (nqp::isinvokable($arg-code) ?? 'y' !! 'n') ~ $arg }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'tweaked-args-init-state',
+        # Dispatch
+        -> $capture {
+            # Insert something to call and then use that as the resume init
+            # state, before delegating to invoke it.
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $first);
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture-derived);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        },
+        # Resume
+        -> $capture {
+            # Insert second callee at the start of the resume state and call
+            # with that.
+            my $init-args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $init-args, 0, $second);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        });
+    sub test-call() {
+        nqp::dispatch('tweaked-args-init-state', 'x')
+    }
+    ok(test-call() eq 'xyx', 'Init args can be derived from initial capture');
+    ok(test-call() eq 'xyx', 'Init args can be derived from initial capture (recorded)');
 }
