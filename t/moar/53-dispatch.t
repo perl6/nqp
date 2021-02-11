@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(127);
+plan(131);
 
 {
     sub const($x) {
@@ -696,4 +696,82 @@ class Exhausted {};
     }
     ok(test-call() eq 'xyx', 'Init args can be derived from initial capture');
     ok(test-call() eq 'xyx', 'Init args can be derived from initial capture (recorded)');
+}
+
+# Test we can have two resumable dispatches, and fall from the inner one to the
+# outer one.
+{
+    my $outer := -> $arg { 'o' ~ $arg }
+    my $first-inner := -> $arg { 'fi' ~ $arg ~ nqp::dispatch('boot-resume') }
+    my $second-inner := -> $arg { 'si' ~ $arg ~ nqp::dispatch('boot-resume') }
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'test-resume-outer',
+        # Dispatch
+        -> $capture {
+            # Save our resume init args, and then immediately delegate to the
+            # inner dispatcher.
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'test-resume-inner', $capture);
+        },
+        # Resume
+        -> $capture {
+            # Invoke the outer.
+            my $init-args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $init-args, 0, $outer);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        });
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'test-resume-inner',
+        # Dispatch
+        -> $capture {
+            # Invoke the first inner.
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            my $capture-derived := nqp::dispatch('boot-syscall',
+                    'dispatcher-insert-arg-literal-obj', $capture, 0, $first-inner);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                    'boot-code-constant', $capture-derived);
+        },
+        # Resume
+        -> $capture {
+            # We use the resume state to indicate if we already deferred to the
+            # inner candidate; if so, fall back to outer resumption.
+            my $init-args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            my $state := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-state');
+            my $track-state := nqp::dispatch('boot-syscall', 'dispatcher-track-resume-state');
+            nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $track-state);
+            if nqp::isnull($state) {
+                # First resume. Set state and invoke second inner.
+                nqp::dispatch('boot-syscall', 'dispatcher-set-resume-state-literal', Exhausted);
+                my $capture-derived := nqp::dispatch('boot-syscall',
+                        'dispatcher-insert-arg-literal-obj', $init-args, 0, $second-inner);
+                nqp::dispatch('boot-syscall', 'dispatcher-delegate',
+                        'boot-code-constant', $capture-derived);
+            }
+            else {
+                # Second resume, fall back to outer dispatcher's resumption if
+                # there is one. If not, then hand back a constant.
+                unless nqp::dispatch('boot-syscall', 'dispatcher-next-resumption') {
+                    my $capture-derived := nqp::dispatch('boot-syscall',
+                            'dispatcher-insert-arg-literal-str', $init-args, 0, 'END');
+                    nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-constant',
+                        $capture-derived);
+                }
+            }
+        });
+    sub test-call-inner-only() {
+        nqp::dispatch('test-resume-inner', 'n')
+    }
+    sub test-call() {
+        nqp::dispatch('test-resume-outer', 'n')
+    }
+
+    ok(test-call-inner-only() eq 'finsinEND',
+        'dispatcher-next-resumption returns 0 when there is not one (record)');
+    ok(test-call-inner-only() eq 'finsinEND',
+        'dispatcher-next-resumption returns 0 when there is not one (run)');
+
+    ok(test-call() eq 'finsinon',
+        'dispatcher-next-resumption delegates to outer resumption if there is one (record)');
+    ok(test-call() eq 'finsinon',
+        'dispatcher-next-resumption delegates to outer resumption if there is one (run)');
 }
