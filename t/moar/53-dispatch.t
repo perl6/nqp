@@ -1,6 +1,6 @@
 # Tests for the MoarVM dispatch mechanism
 
-plan(131);
+plan(133);
 
 {
     sub const($x) {
@@ -774,4 +774,82 @@ class Exhausted {};
         'dispatcher-next-resumption delegates to outer resumption if there is one (record)');
     ok(test-call() eq 'finsinon',
         'dispatcher-next-resumption delegates to outer resumption if there is one (run)');
+}
+
+# Test for where we have dispatch resumptions that themselves trigger new
+# resumable dispatches.
+{
+    my class Wrappable {
+        has $!meth;
+        has $!wrapper;
+        method meth() { $!meth }
+        method wrapper() { $!wrapper }
+    }
+    my $parent := Wrappable.new(
+        meth => -> $arg { 'pm' ~ $arg },
+        wrapper => -> $arg { 'pw' ~ $arg ~ nqp::dispatch('boot-resume') });
+    my $child := Wrappable.new(
+        meth => -> $arg { 'cm' ~ $arg ~ nqp::dispatch('boot-resume') },
+        wrapper => -> $arg { 'cw' ~ $arg ~ nqp::dispatch('boot-resume') });
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'test-wrappable-method-outer',
+        # Dispatch
+        -> $capture {
+            # Save our resume init args. Prepend the child wrappable to the args and
+            # delegate.
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'test-wrappable-method-inner',
+                nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-obj', $capture, 0, $child));
+        },
+        # Resume
+        -> $capture {
+            # Delegate again with the parent.
+            my $init-args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'test-wrappable-method-inner',
+                nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-obj', $init-args, 0, $parent));
+        });
+    nqp::dispatch('boot-syscall', 'dispatcher-register', 'test-wrappable-method-inner',
+        # Dispatch
+        -> $capture {
+            # Save our resume init args. Then obtain the first arg which is the
+            # wrappable. Drop it, pull out the wrapper, and make a call to that.
+            nqp::dispatch('boot-syscall', 'dispatcher-set-resume-init-args', $capture);
+            my $wrappable := nqp::captureposarg($capture, 0);
+            my $target := $wrappable.wrapper;
+            nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-code-constant',
+                nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-obj',
+                    nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $capture, 0),
+                    0, $target));
+        },
+        # Resume
+        -> $capture {
+            # We use the resume state to indicate if we already deferred to the
+            # wrapped thing.
+            my $init-args := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-init-args');
+            my $state := nqp::dispatch('boot-syscall', 'dispatcher-get-resume-state');
+            my $track-state := nqp::dispatch('boot-syscall', 'dispatcher-track-resume-state');
+            nqp::dispatch('boot-syscall', 'dispatcher-guard-literal', $track-state);
+            if nqp::isnull($state) {
+                # First resume. Set state and invoke the inner thing.
+                nqp::dispatch('boot-syscall', 'dispatcher-set-resume-state-literal', Exhausted);
+                my $wrappable := nqp::captureposarg($init-args, 0);
+                my $target := $wrappable.meth;
+                nqp::dispatch('boot-syscall', 'dispatcher-delegate', 'boot-code-constant',
+                    nqp::dispatch('boot-syscall', 'dispatcher-insert-arg-literal-obj',
+                        nqp::dispatch('boot-syscall', 'dispatcher-drop-arg', $init-args, 0),
+                        0, $target));
+            }
+            else {
+                # Second resume, fall back to outer dispatcher's resumption.
+                nqp::dispatch('boot-syscall', 'dispatcher-next-resumption') ||
+                    nqp::die('Should not be falling back at the end');
+            }
+        });
+
+    sub test-call() {
+        nqp::dispatch('test-wrappable-method-outer', 'x')
+    }
+    ok(test-call() eq 'cwxcmxpwxpmx',
+        'Can handle resumptions creating further resumable dispatchers (record)');
+    ok(test-call() eq 'cwxcmxpwxpmx',
+        'Can handle resumptions creating further resumable dispatchers (run)');
 }
